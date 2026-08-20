@@ -12,7 +12,10 @@ import { ElasticConversationStore } from "@/src/lib/elastic/conversation-store";
 import { ElasticPreferenceStore } from "@/src/lib/elastic/preference-store";
 import { hotelMemoryAgent } from "./agents/hotel-memory-agent";
 import type { HotelAgentContext } from "./context";
-import { personalizeHotelMapOutputSchema } from "./tools/hotel-map-tools";
+import {
+  fetchAuthoritativePreferencePois,
+  personalizeHotelMapOutputSchema,
+} from "./tools/hotel-map-tools";
 
 export async function generateHotelTurn(
   input: HotelChatRequest & { resourceId: string; credential?: string },
@@ -93,9 +96,17 @@ export async function generateHotelTurn(
   }
 
   if (groundingPinOperations.length === 0) {
+    const pois = shouldUpdateMap
+      ? await fetchAuthoritativePreferencePois({
+          preferences: recalledPreferences,
+          currentPois: input.searchContext.pois,
+          destination: input.searchContext.destination,
+          token: input.credential,
+        })
+      : input.searchContext.pois;
     const personalized = personalizeCandidates({
       hotels: input.searchContext.hotels,
-      pois: input.searchContext.pois,
+      pois,
       preferences: recalledPreferences,
     });
     const groundedOperation = { operation: "upsert" as const, pins: personalized.pins };

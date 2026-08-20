@@ -4,7 +4,9 @@ import { personalizeCandidates } from "@/src/domain/personalization";
 import {
   hotelCandidateSchema,
   mapPinSchema,
+  type PoiCandidate,
   poiCandidateSchema,
+  type RecalledPreference,
   recalledPreferenceSchema,
   recommendationReasonSchema,
 } from "@/src/domain/schemas";
@@ -18,6 +20,43 @@ export const personalizeHotelMapOutputSchema = z.object({
   reasons: z.array(recommendationReasonSchema),
   recalledPreferences: z.array(recalledPreferenceSchema),
 });
+
+type RequestedPoiKind = "cafe" | "transit";
+
+const preferencePoiQueries: Record<RequestedPoiKind, string> = {
+  cafe: "coffee shops",
+  transit: "train stations and public transit",
+};
+
+export async function fetchAuthoritativePreferencePois(input: {
+  preferences: RecalledPreference[];
+  currentPois: PoiCandidate[];
+  destination: string;
+  token: string;
+}): Promise<PoiCandidate[]> {
+  const requestedKinds = (["cafe", "transit"] as const).filter((kind) =>
+    input.preferences.some((preference) => preference.category === kind),
+  );
+  const fetched = (
+    await Promise.all(
+      requestedKinds.map(async (kind) =>
+        withRequestedPoiKind(
+          await searchPicktripPlaces(
+            {
+              query: preferencePoiQueries[kind],
+              contextDestination: input.destination,
+              limit: 4,
+              languageCode: "en",
+            },
+            input.token,
+          ),
+          kind,
+        ),
+      ),
+    )
+  ).flat();
+  return [...new Map([...input.currentPois, ...fetched].map((poi) => [poi.placeId, poi])).values()];
+}
 
 export const personalizeHotelMap = createTool({
   id: "personalize-hotel-map",
@@ -41,36 +80,15 @@ export const personalizeHotelMap = createTool({
       searchText: query,
       destination,
     });
-    const queries = [
-      preferences.some((item) => item.category === "cafe")
-        ? { kind: "cafe" as const, query: "coffee shops" }
-        : null,
-      preferences.some((item) => item.category === "transit")
-        ? { kind: "transit" as const, query: "train stations and public transit" }
-        : null,
-    ].filter((value): value is { kind: "cafe" | "transit"; query: string } => Boolean(value));
-    const fetched = (
-      await Promise.all(
-        queries.map(async ({ kind, query: placeQuery }) =>
-          withRequestedPoiKind(
-            await searchPicktripPlaces(
-              {
-                query: placeQuery,
-                contextDestination: destination,
-                limit: 4,
-                languageCode: "en",
-              },
-              token,
-            ),
-            kind,
-          ),
-        ),
-      )
-    ).flat();
-    const byId = new Map([...currentPois, ...fetched].map((poi) => [poi.placeId, poi]));
+    const pois = await fetchAuthoritativePreferencePois({
+      preferences,
+      currentPois,
+      destination,
+      token,
+    });
     const personalized = personalizeCandidates({
       hotels,
-      pois: [...byId.values()],
+      pois,
       preferences,
     });
     return {
