@@ -8,7 +8,9 @@ import type { DisplayHotel } from "@/src/lib/picktrip/hotel-commerce";
 import {
   buildHotelMapMarkerSpecs,
   type HotelMapMarkerSpec,
+  markerAnchorForKind,
   markerBoundsKey,
+  mergeMarkerClassNames,
 } from "./hotel-map-state";
 
 export function HotelMap({
@@ -40,6 +42,7 @@ export function HotelMap({
   useEffect(() => {
     if (!token || !containerRef.current || mapRef.current) return;
     let disposed = false;
+    let resizeObserver: ResizeObserver | null = null;
     void import("mapbox-gl")
       .then(({ default: mapbox }) => {
         if (disposed || !containerRef.current) return;
@@ -52,6 +55,8 @@ export function HotelMap({
           zoom: 11.8,
         });
         map.addControl(new mapbox.NavigationControl({ showCompass: false }), "bottom-right");
+        resizeObserver = new ResizeObserver(() => map.resize());
+        resizeObserver.observe(containerRef.current);
         map.once("load", () => {
           if (!disposed) setMapReady(true);
         });
@@ -63,6 +68,7 @@ export function HotelMap({
       .catch(() => setError("This device could not start the Mapbox map."));
     return () => {
       disposed = true;
+      resizeObserver?.disconnect();
       setMapReady(false);
       for (const marker of markersRef.current.values()) marker.remove();
       markersRef.current.clear();
@@ -97,7 +103,7 @@ export function HotelMap({
       element.addEventListener("click", () => onSelectRef.current(spec.entityId, spec.kind));
       markersRef.current.set(
         id,
-        new mapbox.Marker({ element, anchor: "bottom" })
+        new mapbox.Marker({ element, anchor: markerAnchorForKind(spec.kind) })
           .setLngLat([spec.longitude, spec.latitude])
           .addTo(map),
       );
@@ -132,7 +138,7 @@ export function HotelMap({
 }
 
 function updateMarkerElement(element: HTMLElement, spec: HotelMapMarkerSpec, selected: boolean) {
-  element.className = `map-marker marker-${spec.kind}${spec.aiRecommended ? " marker-ai" : ""}${selected ? " is-selected" : ""}`;
+  element.className = mergeMarkerClassNames(element.className, spec, selected);
   element.setAttribute("aria-label", `${spec.title}. ${spec.reason}`);
   element.title = `${spec.title} · ${spec.reason}`;
   element.textContent = spec.label;

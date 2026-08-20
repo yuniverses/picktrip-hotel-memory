@@ -6,6 +6,34 @@ export type HotelMapMarkerSpec = MapPin & {
   aiRecommended: boolean;
 };
 
+const visualMarkerClasses = [
+  "map-marker",
+  "marker-hotel",
+  "marker-cafe",
+  "marker-transit",
+  "marker-attraction",
+  "marker-ai",
+  "is-selected",
+] as const;
+
+export function markerAnchorForKind(kind: MapPin["kind"]): "bottom" | "center" {
+  return kind === "hotel" ? "bottom" : "center";
+}
+
+export function mergeMarkerClassNames(
+  existingClassName: string,
+  spec: HotelMapMarkerSpec,
+  selected: boolean,
+): string {
+  const classes = new Set(existingClassName.split(/\s+/).filter(Boolean));
+  for (const className of visualMarkerClasses) classes.delete(className);
+  classes.add("map-marker");
+  classes.add(`marker-${spec.kind}`);
+  if (spec.aiRecommended) classes.add("marker-ai");
+  if (selected) classes.add("is-selected");
+  return [...classes].join(" ");
+}
+
 export function buildHotelMapMarkerSpecs(
   hotels: DisplayHotel[],
   aiPins: MapPin[],

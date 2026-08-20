@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { buildHotelMapMarkerSpecs, markerBoundsKey } from "@/src/components/hotel/hotel-map-state";
+import {
+  buildHotelMapMarkerSpecs,
+  markerAnchorForKind,
+  markerBoundsKey,
+  mergeMarkerClassNames,
+} from "@/src/components/hotel/hotel-map-state";
 import type { DisplayHotel } from "@/src/lib/picktrip/hotel-commerce";
 
 const hotel: DisplayHotel = {
@@ -86,5 +91,27 @@ describe("hotel map marker state", () => {
       markerBoundsKey(after.filter((spec) => spec.kind === "hotel")),
     );
     expect(after.find((spec) => spec.kind === "cafe")?.label).toBe("☕");
+  });
+
+  it("preserves Mapbox positioning classes while updating visual marker state", () => {
+    const [spec] = buildHotelMapMarkerSpecs([hotel], []);
+    const className = mergeMarkerClassNames(
+      "mapboxgl-marker mapboxgl-marker-anchor-bottom marker-cafe is-selected",
+      spec,
+      false,
+    );
+
+    expect(className).toContain("mapboxgl-marker");
+    expect(className).toContain("mapboxgl-marker-anchor-bottom");
+    expect(className).toContain("marker-hotel");
+    expect(className).not.toContain("marker-cafe");
+    expect(className).not.toContain("is-selected");
+  });
+
+  it("anchors hotel labels at their bottom edge and circular POIs at their center", () => {
+    expect(markerAnchorForKind("hotel")).toBe("bottom");
+    expect(markerAnchorForKind("cafe")).toBe("center");
+    expect(markerAnchorForKind("transit")).toBe("center");
+    expect(markerAnchorForKind("attraction")).toBe("center");
   });
 });

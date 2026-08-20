@@ -461,16 +461,13 @@ button {
   font-size: 12px;
   font-weight: 900;
   white-space: nowrap;
-  transition:
-    transform 0.18s ease,
-    box-shadow 0.18s ease;
+  transition: box-shadow 0.18s ease;
 }
 .map-marker.marker-hotel.marker-ai,
 .map-marker.is-selected {
   color: white;
   background: var(--blue);
   box-shadow: 0 9px 22px rgba(7, 136, 246, 0.34);
-  transform: translateY(-3px);
 }
 .map-marker.marker-cafe,
 .map-marker.marker-transit,
