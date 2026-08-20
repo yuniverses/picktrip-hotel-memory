@@ -2,12 +2,17 @@ import { type NextRequest, NextResponse } from "next/server";
 import { hotelChatRequestSchema } from "@/src/domain/schemas";
 import { PICKTRIP_TOKEN_COOKIE } from "@/src/lib/picktrip/config";
 import { verifyPicktripToken } from "@/src/lib/picktrip/session";
+import { generateHotelTurn } from "@/src/mastra/generate-hotel-turn";
+
+export const runtime = "nodejs";
+export const maxDuration = 60;
 
 export async function POST(request: NextRequest) {
   const token = request.cookies.get(PICKTRIP_TOKEN_COOKIE)?.value;
   if (!token) return NextResponse.json({ error: "Sign in to PickTrip first." }, { status: 401 });
+  let identity;
   try {
-    await verifyPicktripToken(token);
+    identity = await verifyPicktripToken(token);
   } catch {
     return NextResponse.json({ error: "PickTrip session is invalid" }, { status: 401 });
   }
@@ -18,7 +23,23 @@ export async function POST(request: NextRequest) {
       { status: 400 },
     );
   }
-  const mastraUrl = `${process.env.MASTRA_BASE_URL ?? "http://localhost:4111"}/hotel-chat`;
+  const mastraBaseUrl = process.env.MASTRA_BASE_URL;
+  const useLocalMastraProxy =
+    Boolean(mastraBaseUrl) || (process.env.NODE_ENV !== "production" && !process.env.VERCEL);
+  if (!useLocalMastraProxy) {
+    try {
+      const result = await generateHotelTurn({
+        ...parsed.data,
+        resourceId: identity.uid,
+        credential: token,
+      });
+      return NextResponse.json({ threadId: parsed.data.threadId, ...result });
+    } catch {
+      return NextResponse.json({ error: "Hotel memory agent failed" }, { status: 502 });
+    }
+  }
+
+  const mastraUrl = `${mastraBaseUrl ?? "http://localhost:4111"}/hotel-chat`;
   const response = await fetch(mastraUrl, {
     method: "POST",
     headers: {
