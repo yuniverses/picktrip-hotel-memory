@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   buildHotelMapMarkerSpecs,
+  buildHotelSearchInput,
+  DEFAULT_DESTINATION,
+  DEFAULT_MAP_CENTER,
+  hotelCameraIntent,
+  keepDestinationLocalHotels,
   markerAnchorForKind,
   markerBoundsKey,
   mergeMarkerClassNames,
@@ -40,6 +45,64 @@ const hotel: DisplayHotel = {
 };
 
 describe("hotel map marker state", () => {
+  it("starts the standalone demo in San Francisco", () => {
+    expect(DEFAULT_DESTINATION).toBe("San Francisco");
+    expect(DEFAULT_MAP_CENTER).toEqual([-122.4194, 37.7749]);
+  });
+
+  it("focuses default empty state on San Francisco and fits only hotel coordinates", () => {
+    expect(hotelCameraIntent(DEFAULT_DESTINATION, [])).toEqual({
+      key: "center:San Francisco",
+      type: "center",
+      center: DEFAULT_MAP_CENTER,
+      zoom: 11.8,
+    });
+
+    const hotelSpecs = buildHotelMapMarkerSpecs([hotel], []);
+    const withPoi = buildHotelMapMarkerSpecs(
+      [hotel],
+      [
+        {
+          id: "cafe:outside",
+          entityId: "outside",
+          kind: "cafe",
+          title: "Faraway cafe",
+          latitude: 40.7128,
+          longitude: -74.006,
+          reason: "Cafe preference",
+          preferenceIds: ["pref-cafe"],
+          score: 0.8,
+          source: "picktrip-place-api",
+        },
+      ],
+    );
+
+    expect(hotelCameraIntent("San Francisco", withPoi)).toEqual(
+      hotelCameraIntent("San Francisco", hotelSpecs),
+    );
+    expect(hotelCameraIntent("San Francisco", withPoi)).toMatchObject({
+      type: "bounds",
+      specs: [{ kind: "hotel" }],
+    });
+  });
+
+  it("uses a geo-only San Francisco request and excludes global outliers from its camera", () => {
+    expect(buildHotelSearchInput("San Francisco")).toEqual({
+      geo: { lat: 37.7749, lng: -122.4194, radiusKm: 30 },
+      hitsPerPage: 30,
+      page: 0,
+      currency: "TWD",
+    });
+
+    const [sanFranciscoHotel] = keepDestinationLocalHotels("San Francisco", [
+      { ...hotel, hotelId: "sf", latitude: 37.7858, longitude: -122.4064 },
+      { ...hotel, hotelId: "cabo", latitude: 22.8905, longitude: -109.9167 },
+    ]);
+
+    expect(sanFranciscoHotel.hotelId).toBe("sf");
+    expect(buildHotelSearchInput("Paris")).toMatchObject({ q: "Paris", hitsPerPage: 30 });
+  });
+
   it("keeps one stable hotel id and retains its true stay-total label when AI recommends it", () => {
     const specs = buildHotelMapMarkerSpecs(
       [hotel],

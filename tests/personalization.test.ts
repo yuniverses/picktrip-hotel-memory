@@ -64,11 +64,11 @@ describe("hotel map personalization", () => {
       ],
     });
 
-    expect(result.pins.filter((pin) => pin.kind === "hotel")).toHaveLength(4);
+    expect(result.pins.filter((pin) => pin.kind === "hotel")).toHaveLength(6);
     expect(result.pins.filter((pin) => pin.kind === "cafe")).toHaveLength(1);
     expect(result.pins.filter((pin) => pin.kind === "transit")).toHaveLength(1);
     expect(result.pins.map((pin) => pin.id)).toContain("cafe:cafe-1");
     expect(result.pins.map((pin) => pin.id)).toContain("transit:station-1");
-    expect(result.pins).toHaveLength(8);
+    expect(result.pins).toHaveLength(12);
   });
 });

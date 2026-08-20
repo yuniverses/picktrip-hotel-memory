@@ -43,7 +43,7 @@ export function personalizeCandidates(input: {
       return { hotel, score: clamp(rating * 0.7 + proximity * 0.3) };
     })
     .sort((left, right) => right.score - left.score)
-    .slice(0, 4);
+    .slice(0, 6);
 
   const preferenceIds = input.preferences.map((item) => item.id);
   const preferenceLabel = preferenceSummary(input.preferences);
@@ -61,7 +61,11 @@ export function personalizeCandidates(input: {
     score,
     source: "picktrip-hotel-api",
   }));
-  const selectedPois = selectPois(relevantPois, input.preferences, 8 - hotelPins.length);
+  const selectedPois = selectPois(
+    relevantPois,
+    input.preferences,
+    Math.min(6, 12 - hotelPins.length),
+  );
   const poiPins: MapPin[] = selectedPois.map((poi) => {
     const kind = poiKind(poi);
     const matchingPreferences = input.preferences.filter((item) => item.category === kind);

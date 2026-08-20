@@ -7,7 +7,7 @@ export const hotelSearchRequestSchema = z
     q: z.string().trim().min(1).optional(),
     countryCode: z.string().trim().min(2).optional(),
     cityName: z.string().trim().min(1).optional(),
-    hitsPerPage: z.number().int().min(1).max(50).default(15),
+    hitsPerPage: z.number().int().min(1).max(50).default(30),
     page: z.number().int().nonnegative().default(0),
     currency: z.string().length(3).default("TWD"),
     geo: z

@@ -7,18 +7,21 @@ import type { MapPin } from "@/src/domain/schemas";
 import type { DisplayHotel } from "@/src/lib/picktrip/hotel-commerce";
 import {
   buildHotelMapMarkerSpecs,
+  DEFAULT_MAP_CENTER,
   type HotelMapMarkerSpec,
+  hotelCameraIntent,
   markerAnchorForKind,
-  markerBoundsKey,
   mergeMarkerClassNames,
 } from "./hotel-map-state";
 
 export function HotelMap({
+  destination,
   hotels,
   aiPins,
   selectedId,
   onSelect,
 }: {
+  destination: string;
   hotels: DisplayHotel[];
   aiPins: MapPin[];
   selectedId: string | null;
@@ -29,7 +32,7 @@ export function HotelMap({
   const mapboxRef = useRef<typeof import("mapbox-gl").default | null>(null);
   const markersRef = useRef(new Map<string, mapboxgl.Marker>());
   const onSelectRef = useRef(onSelect);
-  const lastBoundsKeyRef = useRef("");
+  const lastCameraKeyRef = useRef("");
   const [mapReady, setMapReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const token = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
@@ -51,7 +54,7 @@ export function HotelMap({
         const map = new mapbox.Map({
           container: containerRef.current,
           style: "mapbox://styles/mapbox/streets-v12",
-          center: [139.7671, 35.6812],
+          center: DEFAULT_MAP_CENTER,
           zoom: 11.8,
         });
         map.addControl(new mapbox.NavigationControl({ showCompass: false }), "bottom-right");
@@ -75,7 +78,7 @@ export function HotelMap({
       mapRef.current?.remove();
       mapRef.current = null;
       mapboxRef.current = null;
-      lastBoundsKeyRef.current = "";
+      lastCameraKeyRef.current = "";
     };
   }, [token]);
 
@@ -108,14 +111,19 @@ export function HotelMap({
           .addTo(map),
       );
     }
-    const boundsKey = markerBoundsKey(specs);
-    if (specs.length > 0 && boundsKey !== lastBoundsKeyRef.current) {
+    const camera = hotelCameraIntent(destination, specs);
+    if (camera && camera.key !== lastCameraKeyRef.current) {
+      if (camera.type === "center") {
+        map.easeTo({ center: camera.center, zoom: camera.zoom, duration: 450 });
+        lastCameraKeyRef.current = camera.key;
+        return;
+      }
       const bounds = new mapbox.LngLatBounds();
-      for (const spec of specs) bounds.extend([spec.longitude, spec.latitude]);
+      for (const spec of camera.specs) bounds.extend([spec.longitude, spec.latitude]);
       map.fitBounds(bounds, { padding: 76, maxZoom: 14, duration: 650 });
-      lastBoundsKeyRef.current = boundsKey;
+      lastCameraKeyRef.current = camera.key;
     }
-  }, [mapReady, specs, selectedId]);
+  }, [destination, mapReady, specs, selectedId]);
 
   if (!token) {
     return (

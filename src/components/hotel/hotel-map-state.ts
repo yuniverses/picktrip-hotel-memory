@@ -1,10 +1,69 @@
 import type { MapPin } from "@/src/domain/schemas";
 import { type DisplayHotel, formatStayTotal } from "@/src/lib/picktrip/hotel-commerce";
 
+export const DEFAULT_DESTINATION = "San Francisco";
+export const DEFAULT_MAP_CENTER: [longitude: number, latitude: number] = [-122.4194, 37.7749];
+export const DEFAULT_DESTINATION_RADIUS_KM = 30;
+
+export function buildHotelSearchInput(destination: string) {
+  const base = { hitsPerPage: 30, page: 0, currency: "TWD" as const };
+  if (isDefaultDestination(destination)) {
+    return {
+      ...base,
+      geo: {
+        lat: DEFAULT_MAP_CENTER[1],
+        lng: DEFAULT_MAP_CENTER[0],
+        radiusKm: DEFAULT_DESTINATION_RADIUS_KM,
+      },
+    };
+  }
+  return { ...base, q: destination };
+}
+
+export function keepDestinationLocalHotels<T extends { latitude: number; longitude: number }>(
+  destination: string,
+  hotels: T[],
+): T[] {
+  if (!isDefaultDestination(destination)) return hotels;
+  return hotels.filter(
+    (hotel) =>
+      distanceKm({ latitude: DEFAULT_MAP_CENTER[1], longitude: DEFAULT_MAP_CENTER[0] }, hotel) <=
+      DEFAULT_DESTINATION_RADIUS_KM,
+  );
+}
+
+function isDefaultDestination(destination: string): boolean {
+  return destination.trim().toLowerCase() === DEFAULT_DESTINATION.toLowerCase();
+}
+
+function distanceKm(
+  first: { latitude: number; longitude: number },
+  second: { latitude: number; longitude: number },
+): number {
+  const radians = (value: number) => (value * Math.PI) / 180;
+  const deltaLatitude = radians(second.latitude - first.latitude);
+  const deltaLongitude = radians(second.longitude - first.longitude);
+  const a =
+    Math.sin(deltaLatitude / 2) ** 2 +
+    Math.cos(radians(first.latitude)) *
+      Math.cos(radians(second.latitude)) *
+      Math.sin(deltaLongitude / 2) ** 2;
+  return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
 export type HotelMapMarkerSpec = MapPin & {
   label: string;
   aiRecommended: boolean;
 };
+
+export type HotelCameraIntent =
+  | {
+      type: "center";
+      key: string;
+      center: typeof DEFAULT_MAP_CENTER;
+      zoom: number;
+    }
+  | { type: "bounds"; key: string; specs: HotelMapMarkerSpec[] };
 
 const visualMarkerClasses = [
   "map-marker",
@@ -79,4 +138,23 @@ export function markerBoundsKey(specs: HotelMapMarkerSpec[]): string {
     .map((spec) => `${spec.id}:${spec.longitude.toFixed(5)},${spec.latitude.toFixed(5)}`)
     .sort()
     .join("|");
+}
+
+export function hotelCameraIntent(
+  destination: string,
+  specs: HotelMapMarkerSpec[],
+): HotelCameraIntent | null {
+  const hotels = specs.filter((spec) => spec.kind === "hotel");
+  if (hotels.length > 0) {
+    return { type: "bounds", key: `hotels:${markerBoundsKey(hotels)}`, specs: hotels };
+  }
+  if (destination === DEFAULT_DESTINATION) {
+    return {
+      type: "center",
+      key: `center:${DEFAULT_DESTINATION}`,
+      center: DEFAULT_MAP_CENTER,
+      zoom: 11.8,
+    };
+  }
+  return null;
 }

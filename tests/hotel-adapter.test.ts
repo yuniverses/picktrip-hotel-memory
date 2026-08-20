@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { normalizeHotelSearchResponse } from "@/src/lib/picktrip/hotel-adapter";
+import { hotelSearchRequestSchema } from "@/src/lib/picktrip/hotel-client";
 
 describe("Picktrip hotel adapter", () => {
+  it("defaults to the supported 30-result discovery size", () => {
+    expect(hotelSearchRequestSchema.parse({ q: "San Francisco" }).hitsPerPage).toBe(30);
+  });
+
   it("normalizes nested Picktrip location lat/lng coordinates", () => {
     const result = normalizeHotelSearchResponse({
       hits: [

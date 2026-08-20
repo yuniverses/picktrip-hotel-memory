@@ -24,13 +24,21 @@ import { AuthControl, usePicktripSession } from "./auth-control";
 import { HotelCard } from "./hotel-card";
 import { HotelDetailDrawer } from "./hotel-detail-drawer";
 import { HotelMap } from "./hotel-map";
+import {
+  buildHotelSearchInput,
+  DEFAULT_DESTINATION,
+  keepDestinationLocalHotels,
+} from "./hotel-map-state";
 import { type ChatMessage, MultiTurnChat } from "./multi-turn-chat";
 
 export function HotelMemoryExperience() {
   const session = usePicktripSession();
-  const [query, setQuery] = useState("Tokyo");
+  const [query, setQuery] = useState(DEFAULT_DESTINATION);
   const [hotels, setHotels] = useState<DisplayHotel[]>([]);
-  const [state, dispatch] = useReducer(reduceHotelState, createInitialHotelState("Tokyo"));
+  const [state, dispatch] = useReducer(
+    reduceHotelState,
+    createInitialHotelState(DEFAULT_DESTINATION),
+  );
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detailHotelId, setDetailHotelId] = useState<string | null>(null);
@@ -156,11 +164,14 @@ export function HotelMemoryExperience() {
       const response = await fetch("/api/hotels/search", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ q: destination, hitsPerPage: 15, page: 0, currency: "TWD" }),
+        body: JSON.stringify(buildHotelSearchInput(destination)),
       });
       const payload = await response.json().catch(() => null);
       if (!response.ok) throw new Error("Hotel search failed. Please try again.");
-      const nextHotels = (payload.hits ?? []) as HotelCandidate[];
+      const nextHotels = keepDestinationLocalHotels(
+        destination,
+        (payload.hits ?? []) as HotelCandidate[],
+      );
       setHotels(nextHotels.map((hotel) => ({ ...hotel, priceStatus: "loading" as const })));
       void hydratePrices(nextHotels, searchRun);
       void runAgentTurn(
@@ -331,6 +342,7 @@ export function HotelMemoryExperience() {
           </aside>
           <section className="map-panel">
             <HotelMap
+              destination={state.destination}
               hotels={visibleHotels}
               aiPins={state.pins}
               selectedId={selectedId}
