@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { hotelMemoryAgentInstructions } from "@/src/mastra/agents/hotel-memory-agent";
-import { groundAssistantText } from "@/src/mastra/generate-hotel-turn";
+import { groundAssistantText, shouldPersonalizeHotelMap } from "@/src/mastra/generate-hotel-turn";
 
 const hotelPin = {
   id: "hotel:tokyo-1",
@@ -97,6 +97,78 @@ describe("groundAssistantText", () => {
     expect(text).toBe("You're welcome. I will keep your transit preference in mind.");
   });
 
+  it("answers an exact second-turn why follow-up instead of repeating the pin summary", () => {
+    const modelText =
+      "I chose Tokyo Station Hotel because it best matches your recalled preference for transit access.";
+    const text = groundAssistantText({
+      userMessage: "why you choose this hotel",
+      modelText,
+      destination: "Tokyo",
+      pinOperations: [{ operation: "upsert", pins: [hotelPin] }],
+      recalledPreferences: [
+        {
+          id: "pref-1",
+          statement: "靠近車站",
+          category: "transit",
+          confidence: 1,
+          score: 1,
+        },
+      ],
+      groundedHotelNames: ["Tokyo Station Hotel"],
+    });
+
+    expect(text).toBe(modelText);
+    expect(text).not.toContain("Added 1 personalized pin");
+  });
+
+  it("answers a Chinese why follow-up in English with grounded hotel and preference data", () => {
+    const modelText =
+      "I chose Tokyo Station Hotel because it aligns with your preference for transit access.";
+    const text = groundAssistantText({
+      userMessage: "為什麼選這間飯店？",
+      modelText,
+      destination: "Tokyo",
+      pinOperations: [{ operation: "upsert", pins: [hotelPin] }],
+      recalledPreferences: [
+        {
+          id: "pref-1",
+          statement: "靠近車站",
+          category: "transit",
+          confidence: 1,
+          score: 1,
+        },
+      ],
+      groundedHotelNames: ["Tokyo Station Hotel"],
+    });
+
+    expect(text).toBe(modelText);
+    expect(text).not.toMatch(/[\u3400-\u9fff]/u);
+  });
+
+  it("rejects invented facilities in a why answer and returns a grounded English explanation", () => {
+    const text = groundAssistantText({
+      userMessage: "Why did you choose this hotel?",
+      modelText: "I chose Tokyo Station Hotel because it has a pool and free breakfast.",
+      destination: "Tokyo",
+      pinOperations: [{ operation: "upsert", pins: [hotelPin] }],
+      recalledPreferences: [
+        {
+          id: "pref-1",
+          statement: "靠近車站",
+          category: "transit",
+          confidence: 1,
+          score: 1,
+        },
+      ],
+      groundedHotelNames: ["Tokyo Station Hotel"],
+    });
+
+    expect(text).toBe(
+      "I chose Tokyo Station Hotel because it best matches your recalled preference for transit access.",
+    );
+    expect(text).not.toMatch(/pool|breakfast/i);
+  });
+
   it("rejects an ungrounded hotel name when no hotel pins were returned", () => {
     const text = groundAssistantText({
       modelText: "I recommend Imaginary Hotel for this stay.",
@@ -115,5 +187,13 @@ describe("groundAssistantText", () => {
     expect(hotelMemoryAgentInstructions).toMatch(/Respond only in concise, natural English/i);
     expect(hotelMemoryAgentInstructions).toMatch(/even if the user writes in another language/i);
     expect(hotelMemoryAgentInstructions).not.toMatch(/Traditional Chinese hotel advisor/i);
+  });
+
+  it("updates the map for recommendation turns but not explanatory follow-ups", () => {
+    expect(shouldPersonalizeHotelMap("Find hotels near cafés and add them to the map")).toBe(true);
+    expect(shouldPersonalizeHotelMap("why you choose this hotel")).toBe(false);
+    expect(shouldPersonalizeHotelMap("為什麼選這間飯店？")).toBe(false);
+    expect(shouldPersonalizeHotelMap("Compare the recommended hotels")).toBe(false);
+    expect(shouldPersonalizeHotelMap("Why this hotel, and add nearby cafés to the map")).toBe(true);
   });
 });

@@ -1,7 +1,12 @@
 import { RequestContext } from "@mastra/core/request-context";
+import { z } from "zod";
 import { personalizeCandidates } from "@/src/domain/personalization";
 import { extractExplicitPreferences } from "@/src/domain/preference-extraction";
-import type { HotelChatRequest, HotelChatResponse } from "@/src/domain/schemas";
+import {
+  type HotelChatRequest,
+  type HotelChatResponse,
+  recalledPreferenceSchema,
+} from "@/src/domain/schemas";
 import { getElasticClient } from "@/src/lib/elastic/client";
 import { ElasticConversationStore } from "@/src/lib/elastic/conversation-store";
 import { ElasticPreferenceStore } from "@/src/lib/elastic/preference-store";
@@ -44,21 +49,34 @@ export async function generateHotelTurn(
   if (input.searchContext.viewport) requestContext.set("viewport", input.searchContext.viewport);
 
   const pinOperations: HotelChatResponse["pinOperations"] = [];
+  const groundingPinOperations: HotelChatResponse["pinOperations"] = [];
   const recommendationReasons: HotelChatResponse["recommendationReasons"] = [];
   let recalledPreferences: HotelChatResponse["recalledPreferences"] = [];
   let personalizationToolFailed = false;
+  const shouldUpdateMap = shouldPersonalizeHotelMap(input.message);
   const result = await hotelMemoryAgent.generate(input.message, {
     memory: { resource: input.resourceId, thread: input.threadId },
     requestContext,
     maxSteps: 8,
     hooks: {
       afterToolCall: ({ toolName, output, error }) => {
-        if (toolName === "personalizeHotelMap" && error) personalizationToolFailed = true;
+        if (toolName === "personalizeHotelMap" && error && shouldUpdateMap) {
+          personalizationToolFailed = true;
+        }
+        if (toolName === "recallPreferences" && !error) {
+          const parsed = z
+            .object({ preferences: z.array(recalledPreferenceSchema) })
+            .safeParse(output);
+          if (parsed.success) recalledPreferences = parsed.data.preferences;
+        }
         if (toolName === "personalizeHotelMap" && !error) {
           const parsed = personalizeHotelMapOutputSchema.safeParse(output);
           if (parsed.success) {
-            pinOperations.push(...parsed.data.operations);
-            recommendationReasons.push(...parsed.data.reasons);
+            groundingPinOperations.push(...parsed.data.operations);
+            if (shouldUpdateMap) {
+              pinOperations.push(...parsed.data.operations);
+              recommendationReasons.push(...parsed.data.reasons);
+            }
             recalledPreferences = parsed.data.recalledPreferences;
           }
         }
@@ -66,25 +84,33 @@ export async function generateHotelTurn(
     },
   });
 
-  if (pinOperations.length === 0) {
+  if (recalledPreferences.length === 0) {
     recalledPreferences = await preferences.recall({
       resourceId: input.resourceId,
       searchText: input.message,
       destination: input.searchContext.destination,
     });
+  }
+
+  if (groundingPinOperations.length === 0) {
     const personalized = personalizeCandidates({
       hotels: input.searchContext.hotels,
       pois: input.searchContext.pois,
       preferences: recalledPreferences,
     });
-    pinOperations.push({ operation: "upsert", pins: personalized.pins });
-    recommendationReasons.push(...personalized.reasons);
+    const groundedOperation = { operation: "upsert" as const, pins: personalized.pins };
+    groundingPinOperations.push(groundedOperation);
+    if (shouldUpdateMap) {
+      pinOperations.push(groundedOperation);
+      recommendationReasons.push(...personalized.reasons);
+    }
   }
 
   const assistantText = groundAssistantText({
+    userMessage: input.message,
     modelText: result.text,
     destination: input.searchContext.destination,
-    pinOperations,
+    pinOperations: groundingPinOperations,
     recalledPreferences,
     explicitToolError: personalizationToolFailed,
   });
@@ -99,16 +125,19 @@ export async function generateHotelTurn(
 }
 
 export function groundAssistantText(input: {
+  userMessage?: string;
   modelText: string;
   destination: string;
   pinOperations: HotelChatResponse["pinOperations"];
   recalledPreferences: HotelChatResponse["recalledPreferences"];
+  groundedHotelNames?: string[];
   explicitToolError?: boolean;
 }): string {
   const pins = input.pinOperations.flatMap((operation) =>
     operation.operation === "upsert" ? operation.pins : [],
   );
-  if (pins.length > 0) {
+  const isFollowUp = isExplanatoryFollowUp(input.userMessage ?? "");
+  if (pins.length > 0 && !isFollowUp) {
     const hotelNames = [
       ...new Set(
         pins
@@ -131,9 +160,23 @@ export function groundAssistantText(input: {
   }
 
   const modelText = input.modelText.trim();
-  if (isSafeEnglishConversation(modelText)) return modelText;
+  const groundedHotelNames = [
+    ...new Set([
+      ...(input.groundedHotelNames ?? []),
+      ...pins
+        .filter((pin) => pin.kind === "hotel" && pin.source === "picktrip-hotel-api")
+        .map((pin) => pin.title),
+    ]),
+  ];
+  if (isSafeEnglishConversation(modelText, groundedHotelNames)) return modelText;
 
   const preferences = summarizePreferenceCategories(input.recalledPreferences);
+  if (isFollowUp && groundedHotelNames.length > 0) {
+    const preferencePhrase = preferences.length
+      ? ` because it best matches your recalled ${preferences.length === 1 ? "preference" : "preferences"} for ${joinEnglishList(preferences)}`
+      : " because it was the strongest grounded option in the current search";
+    return `I chose ${groundedHotelNames[0]}${preferencePhrase}.`;
+  }
   return [
     `The current destination is ${input.destination}. I did not add any new recommendation pins in this turn.`,
     preferences.length ? `Recalled preferences considered: ${preferences.join(", ")}.` : "",
@@ -142,8 +185,31 @@ export function groundAssistantText(input: {
     .join(" ");
 }
 
-function isSafeEnglishConversation(modelText: string): boolean {
+export function shouldPersonalizeHotelMap(message: string): boolean {
+  const requestsExplicitMapChange =
+    /(?:\b(?:add|update|put|place|mark|remove|clear)\b.{0,24}\b(?:map|pins?)\b|\b(?:map|pins?)\b.{0,24}\b(?:add|update|remove|clear)\b|(?:新增|添加|更新|放到|標記|标记|移除|清除).{0,16}(?:地圖|地图|標記|标记))/i.test(
+      message,
+    );
+  if (requestsExplicitMapChange) return true;
+  if (isExplanatoryFollowUp(message)) return false;
+  return /(?:recommend|suggest|find|search|show|add|update|pin|map|stay|hotel|near|close to|prefer|need|want|care about|推薦|推荐|尋找|找|搜尋|搜索|顯示|显示|新增|添加|標記|标记|地圖|地图|入住|飯店|酒店|附近|偏好|喜歡|喜欢|需要|想要|在意|關心|关心)/i.test(
+    message,
+  );
+}
+
+function isExplanatoryFollowUp(message: string): boolean {
+  return /(?:\bwhy\b|\bexplain\b|\bclarif(?:y|ication)\b|\bcompare\b|\btell me more\b|\bwhat do you mean\b|為什麼|为什么|解釋|解释|說明|说明|比較|比较|差別|差异|哪個較好|哪个更好)/i.test(
+    message,
+  );
+}
+
+function isSafeEnglishConversation(modelText: string, groundedHotelNames: string[]): boolean {
   if (!modelText || /[\u3400-\u9fff]/u.test(modelText)) return false;
+
+  const textWithoutGroundedNames = groundedHotelNames.reduce(
+    (text, name) => text.replace(new RegExp(escapeRegExp(name), "giu"), ""),
+    modelText,
+  );
 
   const asksForKnownDestination =
     /(?:tell|give|provide|choose|select).{0,24}(?:destination|city)|(?:what|where).{0,16}(?:destination|city)/i.test(
@@ -154,11 +220,18 @@ function isSafeEnglishConversation(modelText: string): boolean {
       modelText,
     );
   const discussesUngroundedPlace =
-    /\b(?:hotel|inn|resort|hostel|lodge|cafe|café|coffee shop|restaurant|station|attraction)\b/i.test(
-      modelText,
+    /\b(?:[A-Z][\w'&.-]*\s+){1,5}(?:Hotel|Inn|Resort|Hostel|Lodge|Cafe|Café|Restaurant|Station)\b/.test(
+      textWithoutGroundedNames,
+    ) ||
+    /\b(?:recommend(?:ed)?|chose|choose|selected)\s+(?:the\s+)?(?:[A-Z][\w'&.-]*(?:\s+[A-Z][\w'&.-]*){0,5})\b/.test(
+      textWithoutGroundedNames,
     );
   const inventsTravelFact =
     /(?:[$€£¥]|\b(?:USD|EUR|GBP|JPY|TWD|NT\$)\b|\b\d+(?:\.\d+)?\s*(?:km|kilometers?|miles?|minutes?)\b|\b(?:available|availability|sold out)\b)/i.test(
+      modelText,
+    );
+  const inventsFacility =
+    /\b(?:pool|gym|fitness center|spa|breakfast|wi-?fi|parking|airport shuttle|room service|laundry|air conditioning|amenit(?:y|ies))\b/i.test(
       modelText,
     );
 
@@ -166,8 +239,19 @@ function isSafeEnglishConversation(modelText: string): boolean {
     asksForKnownDestination ||
     claimsMapFailure ||
     discussesUngroundedPlace ||
-    inventsTravelFact
+    inventsTravelFact ||
+    inventsFacility
   );
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function joinEnglishList(values: string[]): string {
+  if (values.length < 2) return values[0] ?? "";
+  if (values.length === 2) return `${values[0]} and ${values[1]}`;
+  return `${values.slice(0, -1).join(", ")}, and ${values.at(-1)}`;
 }
 
 const preferenceCategoryLabels: Record<

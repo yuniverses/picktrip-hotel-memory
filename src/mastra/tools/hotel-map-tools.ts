@@ -10,7 +10,7 @@ import {
 } from "@/src/domain/schemas";
 import { getElasticClient } from "@/src/lib/elastic/client";
 import { ElasticPreferenceStore } from "@/src/lib/elastic/preference-store";
-import { searchPicktripPlaces } from "@/src/lib/picktrip/place-client";
+import { searchPicktripPlaces, withRequestedPoiKind } from "@/src/lib/picktrip/place-client";
 import { hotelAgentContextSchema, requireValue } from "../context";
 
 export const personalizeHotelMapOutputSchema = z.object({
@@ -42,15 +42,27 @@ export const personalizeHotelMap = createTool({
       destination,
     });
     const queries = [
-      preferences.some((item) => item.category === "cafe") ? "咖啡廳" : null,
-      preferences.some((item) => item.category === "transit") ? "車站 交通" : null,
-    ].filter((value): value is string => Boolean(value));
+      preferences.some((item) => item.category === "cafe")
+        ? { kind: "cafe" as const, query: "coffee shops" }
+        : null,
+      preferences.some((item) => item.category === "transit")
+        ? { kind: "transit" as const, query: "train stations and public transit" }
+        : null,
+    ].filter((value): value is { kind: "cafe" | "transit"; query: string } => Boolean(value));
     const fetched = (
       await Promise.all(
-        queries.map((placeQuery) =>
-          searchPicktripPlaces(
-            { query: placeQuery, contextDestination: destination, limit: 4, languageCode: "zh-TW" },
-            token,
+        queries.map(async ({ kind, query: placeQuery }) =>
+          withRequestedPoiKind(
+            await searchPicktripPlaces(
+              {
+                query: placeQuery,
+                contextDestination: destination,
+                limit: 4,
+                languageCode: "en",
+              },
+              token,
+            ),
+            kind,
           ),
         ),
       )

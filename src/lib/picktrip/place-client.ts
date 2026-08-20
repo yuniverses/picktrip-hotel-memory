@@ -10,6 +10,37 @@ export const placeCardsRequestSchema = z.object({
   languageCode: z.string().trim().min(1).default("zh-TW"),
 });
 
+const rawPlaceCardSchema = z.object({
+  placeId: z.string().trim().min(1),
+  title: z.string().trim().min(1),
+  subtitle: z.string().nullish(),
+  address: z.string().nullish(),
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+  primaryType: z.string().nullish(),
+  tags: z.array(z.string()).optional(),
+});
+
+function normalizePlaceCards(payload: unknown): PoiCandidate[] {
+  const cards = z
+    .object({ data: z.object({ cards: z.array(z.unknown()).optional() }).optional() })
+    .passthrough()
+    .safeParse(payload);
+  if (!cards.success) return [];
+  return (cards.data.data?.cards ?? []).flatMap((raw) => {
+    const parsed = rawPlaceCardSchema.safeParse(raw);
+    if (!parsed.success) return [];
+    return [
+      poiCandidateSchema.parse({
+        ...parsed.data,
+        primaryType: parsed.data.primaryType ?? "other",
+        tags: parsed.data.tags ?? [],
+        imageUrl: null,
+      }),
+    ];
+  });
+}
+
 export async function searchPicktripPlaces(input: unknown, token: string): Promise<PoiCandidate[]> {
   const body = placeCardsRequestSchema.parse(input);
   const response = await fetch(`${getPicktripApiUrl()}/app/places/cards`, {
@@ -24,9 +55,15 @@ export async function searchPicktripPlaces(input: unknown, token: string): Promi
   });
   const payload = await response.json().catch(() => null);
   if (!response.ok) throw new PicktripApiError(response.status, payload);
-  const cards = payload?.data?.cards;
-  return z
-    .array(poiCandidateSchema)
-    .parse(cards)
-    .map((card) => ({ ...card, imageUrl: null }));
+  return normalizePlaceCards(payload);
+}
+
+export function withRequestedPoiKind(
+  pois: PoiCandidate[],
+  kind: "cafe" | "transit" | "attraction",
+): PoiCandidate[] {
+  return pois.map((poi) => ({
+    ...poi,
+    tags: [...new Set([...poi.tags, kind])],
+  }));
 }

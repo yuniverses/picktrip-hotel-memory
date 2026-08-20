@@ -61,7 +61,8 @@ export function personalizeCandidates(input: {
     score,
     source: "picktrip-hotel-api",
   }));
-  const poiPins: MapPin[] = relevantPois.slice(0, 8).map((poi) => {
+  const selectedPois = selectPois(relevantPois, input.preferences, 8 - hotelPins.length);
+  const poiPins: MapPin[] = selectedPois.map((poi) => {
     const kind = poiKind(poi);
     const matchingPreferences = input.preferences.filter((item) => item.category === kind);
     return {
@@ -88,6 +89,27 @@ export function personalizeCandidates(input: {
       preferenceIds: pin.preferenceIds,
     })),
   };
+}
+
+function selectPois(
+  relevantPois: PoiCandidate[],
+  preferences: RecalledPreference[],
+  limit: number,
+): PoiCandidate[] {
+  if (limit <= 0) return [];
+  const requiredKinds = (["cafe", "transit"] as const).filter((kind) =>
+    preferences.some((preference) => preference.category === kind),
+  );
+  const selected = new Map<string, PoiCandidate>();
+  for (const kind of requiredKinds) {
+    const match = relevantPois.find((poi) => poiKind(poi) === kind);
+    if (match) selected.set(match.placeId, match);
+  }
+  for (const poi of relevantPois) {
+    if (selected.size >= limit) break;
+    selected.set(poi.placeId, poi);
+  }
+  return [...selected.values()].slice(0, limit);
 }
 
 export function poiKind(poi: PoiCandidate): "cafe" | "transit" | "attraction" {
